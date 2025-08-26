@@ -1,0 +1,122 @@
+{
+  "lastModified": "2025-08-26T19:25:10.299177",
+  "todos": [
+    {
+      "id": "audit-pyproject-uvx",
+      "content": "Audit and update pyproject.toml for proper uvx packaging compatibility",
+      "status": "completed",
+      "priority": "high",
+      "created_at": "2025-08-26T18:50:05.648033",
+      "updated_at": "2025-08-26T19:25:10.299177",
+      "metadata": null
+    },
+    {
+      "id": "verify-entry-points",
+      "content": "Verify CLI entry points are correctly configured for uvx installation",
+      "status": "completed",
+      "priority": "high",
+      "created_at": "2025-08-26T18:50:05.648033",
+      "updated_at": "2025-08-26T19:25:10.299177",
+      "metadata": null
+    },
+    {
+      "id": "test-local-uvx-install",
+      "content": "Test local package installation using 'uvx install .' from project directory",
+      "status": "completed",
+      "priority": "high",
+      "created_at": "2025-08-26T18:50:05.648033",
+      "updated_at": "2025-08-26T19:25:10.299177",
+      "metadata": null
+    },
+    {
+      "id": "verify-uvx-command-works",
+      "content": "Verify 'uvx spotify-mcp-server' command works correctly after installation",
+      "status": "completed",
+      "priority": "high",
+      "created_at": "2025-08-26T18:50:05.648033",
+      "updated_at": "2025-08-26T19:25:10.299177",
+      "metadata": null
+    },
+    {
+      "id": "test-config-path-resolution",
+      "content": "Test that config and token file paths resolve correctly with uvx execution",
+      "status": "completed",
+      "priority": "high",
+      "created_at": "2025-08-26T18:50:05.648033",
+      "updated_at": "2025-08-26T19:25:10.299177",
+      "metadata": null
+    },
+    {
+      "id": "update-cursor-config-uvx",
+      "content": "Update Cursor MCP configuration to use uvx command instead of venv path",
+      "status": "completed",
+      "priority": "high",
+      "created_at": "2025-08-26T18:50:05.648033",
+      "updated_at": "2025-08-26T19:25:10.299177",
+      "metadata": null
+    },
+    {
+      "id": "test-cursor-uvx-integration",
+      "content": "Test full Cursor integration with uvx-installed package",
+      "status": "completed",
+      "priority": "high",
+      "created_at": "2025-08-26T18:50:05.648033",
+      "updated_at": "2025-08-26T19:25:10.299177",
+      "metadata": null
+    },
+    {
+      "id": "diagnose-red-dot-issue",
+      "content": "Systematically diagnose why Cursor shows red dot despite server working",
+      "status": "completed",
+      "priority": "high",
+      "created_at": "2025-08-26T19:08:42.364481",
+      "updated_at": "2025-08-26T19:25:10.299177",
+      "metadata": null
+    },
+    {
+      "id": "fix-missing-mcp-config",
+      "content": "Add MCP configuration to Cursor settings.json - discovered it was completely missing",
+      "status": "completed",
+      "priority": "high",
+      "created_at": "2025-08-26T19:18:17.398272",
+      "updated_at": "2025-08-26T19:25:10.299177",
+      "metadata": null
+    },
+    {
+      "id": "test-cursor-connection-after-fix",
+      "content": "Test Cursor connection after adding MCP configuration to settings.json",
+      "status": "completed",
+      "priority": "high",
+      "created_at": "2025-08-26T19:18:55.786080",
+      "updated_at": "2025-08-26T19:25:10.299177",
+      "metadata": null
+    },
+    {
+      "id": "fix-uvx-path-issue",
+      "content": "Fixed wrapper script to use full path to uvx (/opt/homebrew/bin/uvx) for Cursor compatibility",
+      "status": "completed",
+      "priority": "high",
+      "created_at": "2025-08-26T19:25:10.299177",
+      "updated_at": "2025-08-26T19:25:10.299177",
+      "metadata": null
+    },
+    {
+      "id": "verify-token-persistence-uvx",
+      "content": "Verify authentication tokens persist correctly across Cursor restarts with uvx",
+      "status": "pending",
+      "priority": "high",
+      "created_at": "2025-08-26T18:50:05.648033",
+      "updated_at": "2025-08-26T19:25:10.299177",
+      "metadata": null
+    },
+    {
+      "id": "cleanup-venv-references",
+      "content": "Remove or update any remaining venv-specific references in documentation",
+      "status": "pending",
+      "priority": "medium",
+      "created_at": "2025-08-26T18:50:05.648033",
+      "updated_at": "2025-08-26T19:25:10.299177",
+      "metadata": null
+    }
+  ]
+}

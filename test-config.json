@@ -1,0 +1,29 @@
+{
+  "spotify": {
+    "client_id": "your_spotify_client_id_here",
+    "client_secret": "your_spotify_client_secret_here",
+    "redirect_uri": "http://localhost:8888/callback",
+    "scopes": [
+      "playlist-read-private",
+      "playlist-modify-public",
+      "playlist-modify-private",
+      "user-library-read",
+      "user-read-private"
+    ]
+  },
+  "server": {
+    "host": "localhost",
+    "port": 8000,
+    "log_level": "INFO"
+  },
+  "api": {
+    "rate_limit": 100,
+    "retry_attempts": 3,
+    "retry_delays": [
+      3,
+      15,
+      45
+    ],
+    "timeout": 30
+  }
+}
