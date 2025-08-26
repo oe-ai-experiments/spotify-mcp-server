@@ -44,20 +44,33 @@ A FastMCP server for interacting with Spotify Web API, enabling AI assistants to
 
 ## Installation
 
-### Option 1: Install from Source
+### Option 1: Install with uvx (Recommended)
+
+Install directly using uvx for the best experience:
 
 ```bash
-git clone <repository-url>
+# Install from GitHub
+uvx --from git+https://github.com/oe-ai-experiments/spotify-mcp-server.git spotify-mcp-server --setup-auth
+
+# Or install from local directory
+git clone https://github.com/oe-ai-experiments/spotify-mcp-server.git
 cd spotify-mcp-server
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -e ".[dev]"
+uvx --from . spotify-mcp-server --setup-auth
 ```
 
-### Option 2: Install with uvx (Recommended)
+### Option 2: Development Installation
+
+For development and testing:
 
 ```bash
-uvx install spotify-mcp-server
+git clone https://github.com/oe-ai-experiments/spotify-mcp-server.git
+cd spotify-mcp-server
+
+# Install in development mode
+pip install -e ".[dev]"
+
+# Or use uv for faster dependency management
+uv pip install -e ".[dev]"
 ```
 
 ## Configuration
@@ -133,15 +146,31 @@ uvx run spotify-mcp-server --config config.json
 
 ### Using with MCP Clients
 
-The server uses **stdio transport** and can be integrated with any MCP-compatible client:
+The server uses **stdio transport** and can be integrated with any MCP-compatible client.
+
+#### Cursor Integration
+
+Add to your `~/.cursor/mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "spotify": {
-      "command": "python",
-      "args": ["-m", "spotify_mcp_server.main", "--config", "config.json"],
-      "env": {}
+      "command": "/path/to/your/project/run-mcp-server.sh",
+      "args": ["--config", "config.json"]
+    }
+  }
+}
+```
+
+#### Direct uvx Integration
+
+```json
+{
+  "mcpServers": {
+    "spotify": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/oe-ai-experiments/spotify-mcp-server.git", "spotify-mcp-server", "--config", "/absolute/path/to/config.json"]
     }
   }
 }
