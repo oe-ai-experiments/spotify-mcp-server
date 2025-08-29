@@ -75,3 +75,7 @@ cover/
 *.tmp
 *.temp
 .temp/
+
+# MCP and Cursor specific files
+.mcp-todos.json
+.cursor/rules/02-my-custom-rules.mdc

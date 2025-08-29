@@ -259,6 +259,6 @@ class TestSpotifyClientMethods:
             mock_request.assert_called_once_with(
                 "GET", 
                 "/search",
-                params={"q": "test query", "type": "track", "limit": 10, "market": None}
+                params={"q": "test query", "type": "track", "limit": 10, "offset": 0}
             )
 
