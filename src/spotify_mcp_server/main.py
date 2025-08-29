@@ -172,5 +172,12 @@ def cli_main() -> None:
         sys.exit(1)
 
 
+def main() -> None:
+    """Main entry point for FastMCP compatibility."""
+    # Import and run the server with default config
+    from .server import main as server_main
+    server_main()
+
+
 if __name__ == "__main__":
     cli_main()
