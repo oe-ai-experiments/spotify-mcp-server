@@ -334,3 +334,110 @@ class TokenManager:
         manager = cls(authenticator, token_file, encryption_key)
         await manager.load_tokens()
         return manager
+
+
+class UserTokenManager(TokenManager):
+    """Token manager with user-specific token storage."""
+    
+    def __init__(
+        self,
+        authenticator: SpotifyAuthenticator,
+        user_id: str,
+        base_path: Optional[Path] = None,
+        encryption_key: Optional[bytes] = None
+    ):
+        """Initialize user-specific token manager.
+        
+        Args:
+            authenticator: Spotify authenticator instance
+            user_id: Unique user identifier
+            base_path: Base directory for token storage (default: current directory)
+            encryption_key: Encryption key for token storage (generates new if None)
+        """
+        self.user_id = user_id
+        base_path = base_path or Path(".")
+        
+        # Create user-specific token file paths
+        user_token_file = base_path / f"tokens_{self._sanitize_user_id(user_id)}.json"
+        
+        # Initialize parent class with user-specific file
+        super().__init__(authenticator, user_token_file, encryption_key)
+        
+        logger.debug(f"Initialized UserTokenManager for user: {user_id}")
+    
+    def _sanitize_user_id(self, user_id: str) -> str:
+        """Sanitize user ID for use in filename.
+        
+        Args:
+            user_id: Raw user ID
+            
+        Returns:
+            Sanitized user ID safe for filesystem
+        """
+        # Replace potentially problematic characters with underscores
+        import re
+        # Allow only alphanumeric, hyphens, underscores, and dots
+        sanitized = re.sub(r'[^\w\-_]', '_', user_id)
+        # Limit length to avoid filesystem issues
+        return sanitized[:50]
+    
+    def get_user_id(self) -> str:
+        """Get the user ID for this token manager.
+        
+        Returns:
+            User ID string
+        """
+        return self.user_id
+    
+    async def load_tokens(self) -> bool:
+        """Load user-specific tokens from storage.
+        
+        Returns:
+            True if tokens were loaded successfully, False otherwise
+        """
+        result = await super().load_tokens()
+        if result:
+            logger.debug(f"Loaded tokens for user: {self.user_id}")
+        else:
+            logger.debug(f"No tokens found for user: {self.user_id}")
+        return result
+    
+    async def save_tokens(self) -> None:
+        """Save user-specific tokens to storage."""
+        await super().save_tokens()
+        logger.debug(f"Saved tokens for user: {self.user_id}")
+    
+    async def clear_tokens(self) -> None:
+        """Clear user-specific tokens from storage."""
+        await super().clear_tokens()
+        logger.info(f"Cleared tokens for user: {self.user_id}")
+    
+    def __repr__(self) -> str:
+        """String representation of UserTokenManager."""
+        return f"UserTokenManager(user_id='{self.user_id}', token_file='{self.token_file}')"
+    
+    @classmethod
+    async def create_for_user(
+        cls,
+        config: SpotifyConfig,
+        user_id: str,
+        base_path: Optional[Path] = None,
+        encryption_key: Optional[bytes] = None
+    ) -> "UserTokenManager":
+        """Create and initialize a UserTokenManager for a specific user.
+        
+        Args:
+            config: Spotify configuration
+            user_id: Unique user identifier
+            base_path: Base directory for token storage
+            encryption_key: Optional encryption key
+            
+        Returns:
+            Initialized UserTokenManager instance
+        """
+        from .auth import SpotifyAuthenticator
+        
+        authenticator = SpotifyAuthenticator(config)
+        manager = cls(authenticator, user_id, base_path, encryption_key)
+        await manager.load_tokens()
+        return manager

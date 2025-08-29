@@ -6,13 +6,13 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 from fastmcp import FastMCP
 
 from .config import Config, ConfigManager
 from .auth import SpotifyAuthenticator
-from .token_manager import TokenManager
+from .token_manager import TokenManager, UserTokenManager
 from .spotify_client import SpotifyClient
 from .tools import register_spotify_tools
 from .resources import register_spotify_resources
@@ -51,6 +51,10 @@ class SpotifyMCPServer:
         self.authenticator = SpotifyAuthenticator(config.spotify)
         self.token_manager: Optional[TokenManager] = None
         self.spotify_client: Optional[SpotifyClient] = None
+        
+        # User-specific token manager cache for multi-user support
+        self._user_token_managers: Dict[str, UserTokenManager] = {}
+        self._user_auth_states: Dict[str, Dict[str, str]] = {}
         
         # Add middleware in order (first added = outermost layer)
         # Pass server instance for dependency injection
@@ -95,6 +99,90 @@ class SpotifyMCPServer:
         register_spotify_resources(self.app, self.spotify_client)
         
         self._log_to_stderr("Spotify MCP Server initialized successfully")
+
+    def get_user_token_manager(self, user_id: str) -> UserTokenManager:
+        """Get or create a token manager for a specific user.
+        
+        Args:
+            user_id: Unique user identifier
+            
+        Returns:
+            UserTokenManager instance for the user
+        """
+        if user_id not in self._user_token_managers:
+            # Create new user token manager
+            config_dir = Path(self.config_path).resolve().parent
+            user_token_manager = UserTokenManager(
+                authenticator=self.authenticator,
+                user_id=user_id,
+                base_path=config_dir
+            )
+            
+            # Cache the manager
+            self._user_token_managers[user_id] = user_token_manager
+            
+            logger.debug(f"Created new UserTokenManager for user: {user_id}")
+        
+        return self._user_token_managers[user_id]
+    
+    async def load_user_tokens(self, user_id: str) -> bool:
+        """Load tokens for a specific user.
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            True if tokens were loaded successfully
+        """
+        user_token_manager = self.get_user_token_manager(user_id)
+        return await user_token_manager.load_tokens()
+    
+    def get_user_auth_state(self, user_id: str) -> Optional[Dict[str, str]]:
+        """Get authentication state for a specific user.
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            Authentication state dictionary or None
+        """
+        return self._user_auth_states.get(user_id)
+    
+    def set_user_auth_state(self, user_id: str, state: str, code_verifier: str) -> None:
+        """Set authentication state for a specific user.
+        
+        Args:
+            user_id: User identifier
+            state: OAuth state parameter
+            code_verifier: PKCE code verifier
+        """
+        self._user_auth_states[user_id] = {
+            'state': state,
+            'code_verifier': code_verifier
+        }
+        logger.debug(f"Set auth state for user: {user_id}")
+    
+    def clear_user_auth_state(self, user_id: str) -> None:
+        """Clear authentication state for a specific user.
+        
+        Args:
+            user_id: User identifier
+        """
+        if user_id in self._user_auth_states:
+            del self._user_auth_states[user_id]
+            logger.debug(f"Cleared auth state for user: {user_id}")
+    
+    async def cleanup_user_managers(self) -> None:
+        """Clean up all user token managers."""
+        for user_id, manager in self._user_token_managers.items():
+            try:
+                await manager.close()
+                logger.debug(f"Closed token manager for user: {user_id}")
+            except Exception as e:
+                logger.warning(f"Failed to close token manager for user {user_id}: {e}")
+        
+        self._user_token_managers.clear()
+        self._user_auth_states.clear()
 
     async def authenticate_user(self) -> bool:
         """Perform user authentication if needed.
@@ -201,6 +289,9 @@ class SpotifyMCPServer:
         """Cleanup server resources."""
         self._log_to_stderr("Cleaning up server resources...")
         
+        # Clean up user token managers first
+        await self.cleanup_user_managers()
+        
         if self.spotify_client:
             await self.spotify_client.close()
         
@@ -238,8 +329,8 @@ def main(config_path: str = "config.json") -> None:
     # Resolve config path to absolute path
     config_path = str(Path(config_path).resolve())
     
-    # Load configuration
-    config = ConfigManager.load_from_file(config_path)
+    # Load configuration with environment variable precedence
+    config = ConfigManager.load_with_env_precedence(config_path)
     
     # Create and run server
     SpotifyMCPServer.create_and_run(config, config_path)

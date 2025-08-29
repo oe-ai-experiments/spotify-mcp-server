@@ -10,6 +10,7 @@ from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
 from .spotify_client import SpotifyClient, SpotifyAPIError, NotFoundError, RateLimitError
+from .user_context import get_current_user, get_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +82,29 @@ def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_i
     
     Args:
         app: FastMCP application instance
-        spotify_client: Configured Spotify API client
+        spotify_client: Configured Spotify API client (legacy, kept for compatibility)
         server_instance: Server instance for dependency injection
     """
+    
+    async def get_user_spotify_client() -> SpotifyClient:
+        """Get a Spotify client for the current user.
+        
+        Returns:
+            SpotifyClient configured for the current user
+            
+        Raises:
+            SpotifyAPIError: If user is not authenticated or server unavailable
+        """
+        if not server_instance:
+            raise SpotifyAPIError("Server not available")
+        
+        user = get_current_user()
+        user_token_manager = server_instance.get_user_token_manager(user.user_id)
+        
+        if not user_token_manager.has_tokens():
+            raise SpotifyAPIError(f"User {user.display_name} is not authenticated. Use get_auth_url and authenticate tools first.")
+        
+        return SpotifyClient(user_token_manager, server_instance.config.api)
     
     @app.tool()
     async def get_auth_url() -> Dict[str, Any]:
@@ -93,21 +114,32 @@ def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_i
             Authorization URL and instructions for authentication
         """
         try:
+            # Get current user context
+            user = get_current_user()
+            
             # Use injected server instance instead of global state
             if not server_instance:
                 raise SpotifyAPIError("Server not available")
             
-            # Generate authorization URL
-            auth_url, state, code_verifier = server_instance.authenticator.get_authorization_url()
+            # Get user-specific token manager
+            user_token_manager = server_instance.get_user_token_manager(user.user_id)
             
-            # Store the code_verifier and state for later use
-            server_instance._auth_state = state
-            server_instance._code_verifier = code_verifier
+            # Generate authorization URL
+            auth_url, state, code_verifier = user_token_manager.authenticator.get_authorization_url()
+            
+            # Store the code_verifier and state for later use (per user)
+            if not hasattr(server_instance, '_user_auth_states'):
+                server_instance._user_auth_states = {}
+            server_instance._user_auth_states[user.user_id] = {
+                'state': state,
+                'code_verifier': code_verifier
+            }
             
             return {
                 "auth_url": auth_url,
+                "user_id": user.user_id,
                 "instructions": [
-                    "1. Open the authorization URL in your browser",
+                    f"1. Open the authorization URL in your browser (User: {user.display_name})",
                     "2. Authorize the application", 
                     "3. Copy the full callback URL from your browser",
                     "4. Use the 'authenticate' tool with the callback URL"
@@ -125,27 +157,40 @@ def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_i
             Authentication status and user information if authenticated
         """
         try:
+            # Get current user context
+            user = get_current_user()
+            
             # Use injected server instance instead of global state
             if not server_instance:
                 return {
                     "authenticated": False,
-                    "message": "Server not available"
+                    "message": "Server not available",
+                    "user_id": user.user_id
                 }
             
-            if not server_instance.token_manager.has_tokens():
+            # Get user-specific token manager
+            user_token_manager = server_instance.get_user_token_manager(user.user_id)
+            
+            if not user_token_manager.has_tokens():
                 return {
                     "authenticated": False,
-                    "message": "No authentication tokens found. Run 'spotify-mcp-server --setup-auth' to authenticate."
+                    "message": f"No authentication tokens found for user {user.display_name}. Use get_auth_url and authenticate tools.",
+                    "user_id": user.user_id
                 }
             
             # Test if tokens are valid
             try:
-                async with spotify_client:
-                    user_info = await spotify_client.get_current_user()
+                # Create user-specific Spotify client
+                user_spotify_client = SpotifyClient(user_token_manager, server_instance.config.api)
+                try:
+                    user_info = await user_spotify_client.get_current_user()
+                finally:
+                    await user_spotify_client.close()
                 
                 return {
                     "authenticated": True,
-                    "message": "Successfully authenticated",
+                    "message": f"Successfully authenticated as {user.display_name}",
+                    "user_id": user.user_id,
                     "user": {
                         "id": user_info.get("id"),
                         "display_name": user_info.get("display_name"),
@@ -157,14 +202,17 @@ def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_i
             except Exception as e:
                 return {
                     "authenticated": False,
-                    "message": f"Authentication tokens are invalid: {e}. Run 'spotify-mcp-server --setup-auth' to re-authenticate."
+                    "message": f"Authentication tokens are invalid for user {user.display_name}: {e}. Use get_auth_url and authenticate tools.",
+                    "user_id": user.user_id
                 }
                 
         except Exception as e:
-            logger.error(f"Failed to check authentication status: {e}")
+            user_id = get_user_id()
+            logger.error(f"Failed to check authentication status for user {user_id}: {e}")
             return {
                 "authenticated": False,
-                "message": f"Error checking authentication: {e}"
+                "message": f"Error checking authentication: {e}",
+                "user_id": user_id
             }
     
     @app.tool()
@@ -178,12 +226,22 @@ def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_i
             Authentication status and user information
         """
         try:
+            # Get current user context
+            user = get_current_user()
+            
             # Use injected server instance instead of global state
             if not server_instance:
                 raise SpotifyAPIError("Server not available")
             
+            # Get user-specific token manager and auth state
+            user_token_manager = server_instance.get_user_token_manager(user.user_id)
+            auth_state = server_instance.get_user_auth_state(user.user_id)
+            
+            if not auth_state:
+                raise SpotifyAPIError("No authentication state found. Please call get_auth_url first.")
+            
             # Parse callback URL
-            code, returned_state, error = server_instance.authenticator.parse_callback_url(params.callback_url)
+            code, returned_state, error = user_token_manager.authenticator.parse_callback_url(params.callback_url)
             
             if error:
                 raise SpotifyAPIError(f"Authentication error: {error}")
@@ -191,29 +249,40 @@ def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_i
             if not code:
                 raise SpotifyAPIError("No authorization code found in callback URL")
             
+            # Verify state matches
+            if returned_state != auth_state.get('state'):
+                raise SpotifyAPIError("Invalid state parameter. Possible CSRF attack.")
+            
             # Exchange code for tokens
-            tokens = await server_instance.authenticator.exchange_code_for_tokens(
+            tokens = await user_token_manager.authenticator.exchange_code_for_tokens(
                 authorization_code=code,
                 state=returned_state,
-                code_verifier=getattr(server_instance, '_code_verifier', None)
+                code_verifier=auth_state.get('code_verifier')
             )
             
-            # Store tokens
-            await server_instance.token_manager.set_tokens(tokens)
+            # Store tokens for this user
+            await user_token_manager.set_tokens(tokens)
             
-            # Get user info to confirm authentication
-            async with spotify_client:
-                user_info = await spotify_client.get_current_user()
+            # Create user-specific Spotify client to get user info
+            user_spotify_client = SpotifyClient(user_token_manager, server_instance.config.api)
+            try:
+                user_info = await user_spotify_client.get_current_user()
+            finally:
+                await user_spotify_client.close()
             
-            pass  # logger.info suppressed for MCP("Authentication successful!")
+            # Clear auth state after successful authentication
+            server_instance.clear_user_auth_state(user.user_id)
+            
+            logger.info(f"Authentication successful for user: {user.user_id}")
             return {
                 "status": "success",
-                "message": "Authentication successful!",
+                "message": f"Authentication successful for user: {user.display_name}!",
+                "user_id": user.user_id,
                 "user": user_info
             }
             
         except Exception as e:
-            pass  # logger.error suppressed for MCP(f"Authentication failed: {e}")
+            logger.error(f"Authentication failed for user {get_user_id()}: {e}")
             raise SpotifyAPIError(f"Authentication failed: {e}")
     
     @app.tool()
@@ -230,13 +299,19 @@ def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_i
             SpotifyAPIError: If API request fails
         """
         try:
-            pass  # logger.info suppressed for MCP(f"Searching tracks: query='{params.query}', limit={params.limit}")
+            user = get_current_user()
+            logger.info(f"Searching tracks for user {user.user_id}: query='{params.query}', limit={params.limit}")
             
-            result = await spotify_client.search_tracks(
-                query=params.query,
-                limit=params.limit,
-                market=params.market
-            )
+            # Get user-specific Spotify client
+            user_spotify_client = await get_user_spotify_client()
+            try:
+                result = await user_spotify_client.search_tracks(
+                    query=params.query,
+                    limit=params.limit,
+                    market=params.market
+                )
+            finally:
+                await user_spotify_client.close()
             
             # Extract and format track data
             tracks = result.get("tracks", {}).get("items", [])
@@ -285,12 +360,18 @@ def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_i
             User's playlists information
         """
         try:
-            pass  # logger.info suppressed for MCP(f"Getting user playlists: limit={params.limit}, offset={params.offset}")
+            user = get_current_user()
+            logger.info(f"Getting playlists for user {user.user_id}: limit={params.limit}, offset={params.offset}")
             
-            result = await spotify_client.get_user_playlists(
-                limit=params.limit,
-                offset=params.offset
-            )
+            # Get user-specific Spotify client
+            user_spotify_client = await get_user_spotify_client()
+            try:
+                result = await user_spotify_client.get_user_playlists(
+                    limit=params.limit,
+                    offset=params.offset
+                )
+            finally:
+                await user_spotify_client.close()
             
             # Format playlist data
             playlists = result.get("items", [])
@@ -340,9 +421,15 @@ def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_i
             Detailed playlist information with tracks
         """
         try:
-            pass  # logger.info suppressed for MCP(f"Getting playlist details: playlist_id={params.playlist_id}")
+            user = get_current_user()
+            logger.info(f"Getting playlist details for user {user.user_id}: playlist_id={params.playlist_id}")
             
-            result = await spotify_client.get_playlist(params.playlist_id)
+            # Get user-specific Spotify client
+            user_spotify_client = await get_user_spotify_client()
+            try:
+                result = await user_spotify_client.get_playlist(params.playlist_id)
+            finally:
+                await user_spotify_client.close()
             
             # Format playlist with tracks
             tracks = result.get("tracks", {}).get("items", [])
@@ -405,21 +492,27 @@ def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_i
             Created playlist information
         """
         try:
-            pass  # logger.info suppressed for MCP(f"Creating playlist: name='{params.name}', public={params.public}")
+            user = get_current_user()
+            logger.info(f"Creating playlist for user {user.user_id}: name='{params.name}', public={params.public}")
             
-            # Get current user to create playlist
-            user = await spotify_client.get_current_user()
-            user_id = user.get("id")
-            
-            if not user_id:
-                raise SpotifyAPIError("Unable to get current user ID")
-            
-            result = await spotify_client.create_playlist(
-                user_id=user_id,
-                name=params.name,
-                description=params.description,
-                public=params.public
-            )
+            # Get user-specific Spotify client
+            user_spotify_client = await get_user_spotify_client()
+            try:
+                # Get current user to create playlist
+                spotify_user = await user_spotify_client.get_current_user()
+                user_id = spotify_user.get("id")
+                
+                if not user_id:
+                    raise SpotifyAPIError("Unable to get current user ID")
+                
+                result = await user_spotify_client.create_playlist(
+                    user_id=user_id,
+                    name=params.name,
+                    description=params.description,
+                    public=params.public
+                )
+            finally:
+                await user_spotify_client.close()
             
             return {
                 "id": result.get("id"),
@@ -456,13 +549,19 @@ def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_i
             Playlist snapshot information
         """
         try:
-            pass  # logger.info suppressed for MCP(f"Adding {len(params.track_uris)} tracks to playlist {params.playlist_id}")
+            user = get_current_user()
+            logger.info(f"Adding {len(params.track_uris)} tracks to playlist {params.playlist_id} for user {user.user_id}")
             
-            result = await spotify_client.add_tracks_to_playlist(
+            # Get user-specific Spotify client
+            user_spotify_client = await get_user_spotify_client()
+            try:
+                result = await user_spotify_client.add_tracks_to_playlist(
                 playlist_id=params.playlist_id,
                 track_uris=params.track_uris,
                 position=params.position
-            )
+                )
+            finally:
+                await user_spotify_client.close()
             
             return {
                 "snapshot_id": result.get("snapshot_id"),
@@ -491,12 +590,18 @@ def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_i
             Playlist snapshot information
         """
         try:
-            pass  # logger.info suppressed for MCP(f"Removing {len(params.track_uris)} tracks from playlist {params.playlist_id}")
+            user = get_current_user()
+            logger.info(f"Removing {len(params.track_uris)} tracks from playlist {params.playlist_id} for user {user.user_id}")
             
-            result = await spotify_client.remove_tracks_from_playlist(
-                playlist_id=params.playlist_id,
-                track_uris=params.track_uris
-            )
+            # Get user-specific Spotify client
+            user_spotify_client = await get_user_spotify_client()
+            try:
+                result = await user_spotify_client.remove_tracks_from_playlist(
+                    playlist_id=params.playlist_id,
+                    track_uris=params.track_uris
+                )
+            finally:
+                await user_spotify_client.close()
             
             return {
                 "snapshot_id": result.get("snapshot_id"),
@@ -524,15 +629,21 @@ def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_i
             Detailed track information with audio features
         """
         try:
-            pass  # logger.info suppressed for MCP(f"Getting track details: track_id={params.track_id}")
+            user = get_current_user()
+            logger.info(f"Getting track details for user {user.user_id}: track_id={params.track_id}")
             
-            # Get basic track info and audio features in parallel
-            import asyncio
-            
-            track_task = spotify_client.get_track(params.track_id, params.market)
-            features_task = spotify_client.get_audio_features(params.track_id)
-            
-            track, features = await asyncio.gather(track_task, features_task, return_exceptions=True)
+            # Get user-specific Spotify client
+            user_spotify_client = await get_user_spotify_client()
+            try:
+                # Get basic track info and audio features in parallel
+                import asyncio
+                
+                track_task = user_spotify_client.get_track(params.track_id, params.market)
+                features_task = user_spotify_client.get_audio_features(params.track_id)
+                
+                track, features = await asyncio.gather(track_task, features_task, return_exceptions=True)
+            finally:
+                await user_spotify_client.close()
             
             # Handle track data
             if isinstance(track, Exception):
@@ -603,9 +714,15 @@ def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_i
             Detailed album information
         """
         try:
-            pass  # logger.info suppressed for MCP(f"Getting album details: album_id={params.album_id}")
+            user = get_current_user()
+            logger.info(f"Getting album details for user {user.user_id}: album_id={params.album_id}")
             
-            result = await spotify_client.get_album(params.album_id, params.market)
+            # Get user-specific Spotify client
+            user_spotify_client = await get_user_spotify_client()
+            try:
+                result = await user_spotify_client.get_album(params.album_id, params.market)
+            finally:
+                await user_spotify_client.close()
             
             # Format tracks
             tracks = result.get("tracks", {}).get("items", [])
@@ -664,9 +781,15 @@ def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_i
             Detailed artist information
         """
         try:
-            pass  # logger.info suppressed for MCP(f"Getting artist details: artist_id={params.artist_id}")
+            user = get_current_user()
+            logger.info(f"Getting artist details for user {user.user_id}: artist_id={params.artist_id}")
             
-            result = await spotify_client.get_artist(params.artist_id)
+            # Get user-specific Spotify client
+            user_spotify_client = await get_user_spotify_client()
+            try:
+                result = await user_spotify_client.get_artist(params.artist_id)
+            finally:
+                await user_spotify_client.close()
             
             return {
                 "id": result.get("id"),

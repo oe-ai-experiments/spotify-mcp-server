@@ -196,6 +196,196 @@ class ConfigManager:
         return Config(**config_data)
 
     @staticmethod
+    def load_with_env_precedence(config_path: Optional[Union[str, Path]] = None) -> Config:
+        """Load configuration with environment variable precedence.
+        
+        Environment variables take precedence over config file values.
+        If no config file is provided or found, falls back to environment-only.
+        
+        Args:
+            config_path: Optional path to configuration file
+            
+        Returns:
+            Configuration object with environment precedence
+            
+        Raises:
+            ValueError: If required values are missing from both sources
+        """
+        # Start with default config data
+        config_data = {
+            "spotify": {},
+            "server": {},
+            "api": {}
+        }
+        
+        # Load from file first (if available)
+        if config_path:
+            config_path = Path(config_path)
+            if config_path.exists():
+                try:
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        file_config = json.load(f)
+                    
+                    # Merge file config into base config
+                    for section in ["spotify", "server", "api"]:
+                        if section in file_config:
+                            config_data[section].update(file_config[section])
+                            
+                except (json.JSONDecodeError, KeyError) as e:
+                    # Log warning but continue with env vars
+                    import logging
+                    logging.warning(f"Failed to load config file {config_path}: {e}")
+        
+        # Override with environment variables (precedence)
+        # Spotify config
+        if os.getenv("SPOTIFY_CLIENT_ID"):
+            config_data["spotify"]["client_id"] = os.getenv("SPOTIFY_CLIENT_ID")
+        if os.getenv("SPOTIFY_CLIENT_SECRET"):
+            config_data["spotify"]["client_secret"] = os.getenv("SPOTIFY_CLIENT_SECRET")
+        if os.getenv("SPOTIFY_REDIRECT_URI"):
+            config_data["spotify"]["redirect_uri"] = os.getenv("SPOTIFY_REDIRECT_URI")
+        
+        # Server config
+        if os.getenv("SERVER_HOST"):
+            config_data["server"]["host"] = os.getenv("SERVER_HOST")
+        if os.getenv("SERVER_PORT"):
+            config_data["server"]["port"] = int(os.getenv("SERVER_PORT"))
+        if os.getenv("LOG_LEVEL"):
+            config_data["server"]["log_level"] = os.getenv("LOG_LEVEL")
+        
+        # API config
+        if os.getenv("API_RATE_LIMIT"):
+            config_data["api"]["rate_limit"] = int(os.getenv("API_RATE_LIMIT"))
+        if os.getenv("API_RETRY_ATTEMPTS"):
+            config_data["api"]["retry_attempts"] = int(os.getenv("API_RETRY_ATTEMPTS"))
+        if os.getenv("API_TIMEOUT"):
+            config_data["api"]["timeout"] = int(os.getenv("API_TIMEOUT"))
+        
+        # Set defaults for missing values
+        # Spotify defaults
+        if "client_id" not in config_data["spotify"]:
+            config_data["spotify"]["client_id"] = ""
+        if "client_secret" not in config_data["spotify"]:
+            config_data["spotify"]["client_secret"] = ""
+        if "redirect_uri" not in config_data["spotify"]:
+            config_data["spotify"]["redirect_uri"] = "http://localhost:8888/callback"
+        if "scopes" not in config_data["spotify"]:
+            config_data["spotify"]["scopes"] = [
+                "playlist-read-private",
+                "playlist-modify-public", 
+                "playlist-modify-private",
+                "user-library-read",
+                "user-read-private"
+            ]
+        
+        # Server defaults
+        if "host" not in config_data["server"]:
+            config_data["server"]["host"] = "localhost"
+        if "port" not in config_data["server"]:
+            config_data["server"]["port"] = 8000
+        if "log_level" not in config_data["server"]:
+            config_data["server"]["log_level"] = "INFO"
+        
+        # API defaults
+        if "rate_limit" not in config_data["api"]:
+            config_data["api"]["rate_limit"] = 100
+        if "retry_attempts" not in config_data["api"]:
+            config_data["api"]["retry_attempts"] = 3
+        if "retry_delays" not in config_data["api"]:
+            config_data["api"]["retry_delays"] = [3, 15, 45]
+        if "timeout" not in config_data["api"]:
+            config_data["api"]["timeout"] = 30
+        
+        # Validate configuration before creating Config object
+        ConfigManager._validate_production_config(config_data, config_path)
+        
+        return Config(**config_data)
+    
+    @staticmethod
+    def _validate_production_config(config_data: dict, config_path: Optional[Path]) -> None:
+        """Validate configuration for production deployment.
+        
+        Args:
+            config_data: Configuration data dictionary
+            config_path: Path to config file (if any)
+            
+        Raises:
+            ValueError: If required configuration is missing or invalid
+        """
+        errors = []
+        warnings = []
+        
+        # Check required Spotify credentials
+        if not config_data["spotify"].get("client_id"):
+            errors.append("Missing SPOTIFY_CLIENT_ID")
+        
+        if not config_data["spotify"].get("client_secret"):
+            errors.append("Missing SPOTIFY_CLIENT_SECRET")
+        
+        # Validate redirect URI format
+        redirect_uri = config_data["spotify"].get("redirect_uri", "")
+        if redirect_uri and not redirect_uri.startswith(("http://", "https://")):
+            errors.append(f"Invalid SPOTIFY_REDIRECT_URI format: {redirect_uri}")
+        
+        # Check for production security considerations
+        if redirect_uri and redirect_uri.startswith("http://") and "localhost" not in redirect_uri:
+            warnings.append("Using HTTP redirect URI in production is not recommended. Use HTTPS for security.")
+        
+        # Validate server configuration
+        server_port = config_data["server"].get("port", 8000)
+        if not isinstance(server_port, int) or server_port < 1 or server_port > 65535:
+            errors.append(f"Invalid SERVER_PORT: {server_port}. Must be between 1-65535.")
+        
+        # Validate API configuration
+        api_timeout = config_data["api"].get("timeout", 30)
+        if not isinstance(api_timeout, int) or api_timeout < 1:
+            errors.append(f"Invalid API_TIMEOUT: {api_timeout}. Must be a positive integer.")
+        
+        api_rate_limit = config_data["api"].get("rate_limit", 100)
+        if not isinstance(api_rate_limit, int) or api_rate_limit < 1:
+            errors.append(f"Invalid API_RATE_LIMIT: {api_rate_limit}. Must be a positive integer.")
+        
+        # Check for environment vs file configuration
+        has_env_creds = bool(os.getenv("SPOTIFY_CLIENT_ID") and os.getenv("SPOTIFY_CLIENT_SECRET"))
+        has_file_config = config_path and config_path.exists()
+        
+        if not has_env_creds and not has_file_config:
+            errors.append("No configuration source found. Provide either config file or environment variables.")
+        
+        # Production deployment recommendations
+        if has_env_creds:
+            warnings.append("Using environment variables for credentials (recommended for production)")
+        elif has_file_config:
+            warnings.append("Using config file for credentials (consider environment variables for production)")
+        
+        # Report errors
+        if errors:
+            error_msg = "Configuration validation failed:\n"
+            for i, error in enumerate(errors, 1):
+                error_msg += f"  {i}. {error}\n"
+            
+            error_msg += "\nRequired environment variables for FastMCP Cloud deployment:\n"
+            error_msg += "  - SPOTIFY_CLIENT_ID: Your Spotify app client ID\n"
+            error_msg += "  - SPOTIFY_CLIENT_SECRET: Your Spotify app client secret\n"
+            error_msg += "  - SPOTIFY_REDIRECT_URI: OAuth callback URL (optional, defaults to localhost)\n"
+            error_msg += "\nOptional environment variables:\n"
+            error_msg += "  - SERVER_HOST: Server host (default: localhost)\n"
+            error_msg += "  - SERVER_PORT: Server port (default: 8000)\n"
+            error_msg += "  - LOG_LEVEL: Logging level (default: INFO)\n"
+            error_msg += "  - API_RATE_LIMIT: API rate limit (default: 100)\n"
+            error_msg += "  - API_RETRY_ATTEMPTS: Retry attempts (default: 3)\n"
+            error_msg += "  - API_TIMEOUT: Request timeout in seconds (default: 30)\n"
+            
+            raise ValueError(error_msg.strip())
+        
+        # Log warnings
+        if warnings:
+            import logging
+            logger = logging.getLogger(__name__)
+            for warning in warnings:
+                logger.warning(f"Configuration: {warning}")
+
+    @staticmethod
     def create_example_config(output_path: Union[str, Path]) -> None:
         """Create an example configuration file.
         

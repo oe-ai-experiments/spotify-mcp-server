@@ -31,8 +31,8 @@ def setup_authentication(config_path: str) -> None:
         # Resolve config path to absolute path
         config_path = str(Path(config_path).resolve())
         
-        # Load config
-        config = ConfigManager.load_from_file(config_path)
+        # Load config with environment variable precedence
+        config = ConfigManager.load_with_env_precedence(config_path)
         
         # Initialize components with absolute paths
         authenticator = SpotifyAuthenticator(config.spotify)
