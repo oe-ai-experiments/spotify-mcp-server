@@ -11,7 +11,7 @@ import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .server import main
+# main function is defined in this file
 
 if TYPE_CHECKING:
     from .auth import SpotifyAuthenticator
@@ -161,7 +161,8 @@ def cli_main() -> None:
         return
     
     try:
-        # Run the server
+        # Import and run the server
+        from .server import main
         main(args.config)
     except KeyboardInterrupt:
         print("\nServer stopped by user")
