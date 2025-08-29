@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spotify-mcp-server"
-version = "0.1.0"
+version = "2.0.0"
 description = "A FastMCP server for interacting with Spotify Web API"
 authors = [
     {name = "Spotify MCP Server Team", email = "dev@example.com"}
