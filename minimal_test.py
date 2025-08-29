@@ -3,6 +3,7 @@
 
 from fastmcp import FastMCP
 
+# Create the app instance that FastMCP expects to find
 app = FastMCP("Minimal Test Server")
 
 @app.tool()
