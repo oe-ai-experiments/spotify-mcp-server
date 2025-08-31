@@ -1,0 +1,7 @@
+# Core dependencies - stable PyPI versions for FastMCP Cloud
+fastmcp>=2.11.0
+httpx>=0.25.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+cryptography>=41.0.0
+aiofiles>=23.0.0
