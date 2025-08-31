@@ -10,6 +10,8 @@ from pydantic import BaseModel
 
 from .config import APIConfig
 from .token_manager import TokenManager
+from .secure_errors import handle_api_error, handle_authentication_error, log_security_event, ErrorSeverity
+from .network_security import create_secure_spotify_client
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +70,8 @@ class SpotifyClient:
         if self._client is None:
             async with self._client_lock:
                 if self._client is None:  # Double-check pattern
-                    self._client = httpx.AsyncClient(
+                    # Use secure client factory with enhanced security
+                    self._client = create_secure_spotify_client(
                         timeout=httpx.Timeout(self.config.timeout),
                         limits=httpx.Limits(max_connections=10, max_keepalive_connections=5)
                     )
@@ -119,7 +122,13 @@ class SpotifyClient:
         try:
             access_token = await self.token_manager.get_valid_token()
         except ValueError as e:
-            raise AuthenticationError(f"Failed to get valid token: {e}")
+            # Log security event for authentication failure
+            log_security_event(
+                event_type="token_validation_failure",
+                severity=ErrorSeverity.MEDIUM,
+                details={"endpoint": endpoint, "method": method}
+            )
+            raise AuthenticationError("Authentication token is invalid or expired")
         
         # Prepare request
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
@@ -151,7 +160,7 @@ class SpotifyClient:
                 await asyncio.sleep(delay)
                 return await self._make_request(method, endpoint, params, json_data, retry_count + 1)
             else:
-                raise SpotifyAPIError("Request timeout after all retries")
+                raise SpotifyAPIError("Request timed out. Please try again later.")
         
         except httpx.NetworkError as e:
             if retry_count < self.config.retry_attempts:
@@ -160,7 +169,13 @@ class SpotifyClient:
                 await asyncio.sleep(delay)
                 return await self._make_request(method, endpoint, params, json_data, retry_count + 1)
             else:
-                raise SpotifyAPIError(f"Network error after all retries: {e}")
+                # Log network error but don't expose details
+                log_security_event(
+                    event_type="network_error",
+                    severity=ErrorSeverity.LOW,
+                    details={"endpoint": endpoint, "retry_count": retry_count}
+                )
+                raise SpotifyAPIError("Network error occurred. Please check your connection and try again.")
 
     async def _handle_response(
         self,
@@ -458,6 +473,69 @@ class SpotifyClient:
             Audio features
         """
         return await self._make_request("GET", f"/audio-features/{track_id}")
+
+    async def get_bulk_audio_features(self, track_ids: List[str]) -> Dict[str, Any]:
+        """Get audio features for multiple tracks (up to 100).
+        
+        Args:
+            track_ids: List of Spotify track IDs (max 100)
+            
+        Returns:
+            Dictionary mapping track IDs to their audio features
+            
+        Raises:
+            ValueError: If more than 100 track IDs provided
+        """
+        if len(track_ids) > 100:
+            raise ValueError("Maximum 100 track IDs allowed per request")
+        
+        if not track_ids:
+            return {}
+        
+        ids_param = ",".join(track_ids)
+        response = await self._make_request("GET", f"/audio-features?ids={ids_param}")
+        
+        # Convert list response to dictionary mapping track_id -> features
+        result = {}
+        audio_features = response.get("audio_features", [])
+        
+        for i, features in enumerate(audio_features):
+            if features is not None and i < len(track_ids):
+                result[track_ids[i]] = features
+        
+        return result
+
+    async def get_bulk_audio_features_batched(self, track_ids: List[str]) -> Dict[str, Any]:
+        """Get audio features for unlimited tracks with automatic batching.
+        
+        Args:
+            track_ids: List of Spotify track IDs (unlimited)
+            
+        Returns:
+            Dictionary mapping track IDs to their audio features
+        """
+        if not track_ids:
+            return {}
+        
+        result = {}
+        batch_size = 100
+        
+        for i in range(0, len(track_ids), batch_size):
+            batch = track_ids[i:i + batch_size]
+            
+            try:
+                # Add small delay between batches to respect rate limits
+                if i > 0:
+                    await asyncio.sleep(0.1)
+                
+                batch_result = await self.get_bulk_audio_features(batch)
+                result.update(batch_result)
+                
+            except Exception as e:
+                logger.warning(f"Failed to get audio features for batch {i//batch_size + 1}: {e}")
+                continue
+        
+        return result
 
     async def get_audio_analysis(self, track_id: str) -> Dict[str, Any]:
         """Get audio analysis for a track.

@@ -2,6 +2,14 @@
 config.json
 tokens.json
 tokens.key
+tokens_*.json
+tokens_*.key
+*.encrypted.json
+
+# Cache and database files
+spotify_cache.db
+*.db
+*.sqlite
 
 # Python
 __pycache__/

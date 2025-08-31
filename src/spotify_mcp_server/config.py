@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
+from .config_security import ConfigurationSecurity, ConfigurationValidator, validate_production_config
 
 
 class SpotifyConfig(BaseModel):
@@ -108,12 +109,44 @@ class APIConfig(BaseModel):
         return v
 
 
+class CacheConfig(BaseModel):
+    """Cache configuration."""
+    
+    enabled: bool = Field(default=True, description="Enable caching")
+    db_path: str = Field(default="spotify_cache.db", description="SQLite database path")
+    memory_limit: int = Field(default=1000, description="Memory cache size limit")
+    default_ttl_hours: int = Field(default=24, description="Default TTL in hours")
+    audio_features_ttl_hours: int = Field(default=168, description="Audio features TTL (1 week)")
+    playlist_ttl_hours: int = Field(default=1, description="Playlist TTL (1 hour)")
+    track_details_ttl_hours: int = Field(default=24, description="Track details TTL")
+    cleanup_interval_hours: int = Field(default=24, description="Cleanup interval")
+
+    @field_validator("memory_limit")
+    @classmethod
+    def validate_memory_limit(cls, v: int) -> int:
+        """Validate memory limit."""
+        if v <= 0:
+            raise ValueError("Memory limit must be positive")
+        return v
+
+    @field_validator("default_ttl_hours", "audio_features_ttl_hours", 
+                     "playlist_ttl_hours", "track_details_ttl_hours", 
+                     "cleanup_interval_hours")
+    @classmethod
+    def validate_ttl_hours(cls, v: int) -> int:
+        """Validate TTL hours."""
+        if v <= 0:
+            raise ValueError("TTL hours must be positive")
+        return v
+
+
 class Config(BaseModel):
     """Main configuration model."""
     
     spotify: SpotifyConfig
     server: ServerConfig = Field(default_factory=ServerConfig)
     api: APIConfig = Field(default_factory=APIConfig)
+    cache: CacheConfig = Field(default_factory=CacheConfig)
 
     class Config:
         """Pydantic configuration."""
@@ -124,11 +157,12 @@ class ConfigManager:
     """Configuration manager for loading and validating configuration."""
 
     @staticmethod
-    def load_from_file(config_path: Union[str, Path]) -> Config:
-        """Load configuration from a JSON file.
+    def load_from_file(config_path: Union[str, Path], encrypted: bool = False) -> Config:
+        """Load configuration from a JSON file with optional encryption support.
         
         Args:
             config_path: Path to the configuration file
+            encrypted: Whether the configuration file is encrypted
             
         Returns:
             Validated configuration object
@@ -144,10 +178,30 @@ class ConfigManager:
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
         
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                config_data = json.load(f)
+            if encrypted:
+                # Load encrypted configuration
+                config_security = ConfigurationSecurity()
+                config_data = config_security.load_secure_config_file(config_path)
+            else:
+                # Load plain JSON configuration
+                with open(config_path, "r", encoding="utf-8") as f:
+                    config_data = json.load(f)
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in config file: {e}")
+        except Exception as e:
+            raise ValueError(f"Failed to load configuration: {e}")
+        
+        # Validate configuration security
+        environment = os.getenv("DEPLOYMENT_ENVIRONMENT", "production")
+        try:
+            validate_production_config(config_data, environment)
+        except ValueError as e:
+            # Log security validation errors but don't fail startup in development
+            if environment == "production":
+                raise
+            else:
+                import logging
+                logging.warning(f"Configuration security warning: {e}")
         
         return Config(**config_data)
 
@@ -421,6 +475,32 @@ class ConfigManager:
         output_path = Path(output_path)
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(example_config, f, indent=2)
+    
+    @staticmethod
+    def create_secure_config(config_data: Dict[str, Any], output_path: Union[str, Path]) -> None:
+        """Create an encrypted configuration file.
+        
+        Args:
+            config_data: Configuration data to encrypt
+            output_path: Path where to save the encrypted config
+        """
+        config_security = ConfigurationSecurity()
+        output_path = Path(output_path)
+        config_security.secure_config_file(output_path, config_data)
+    
+    @staticmethod
+    def generate_security_report(config: Config, environment: str = "production") -> str:
+        """Generate a security assessment report for configuration.
+        
+        Args:
+            config: Configuration to assess
+            environment: Target environment
+            
+        Returns:
+            Security report as formatted string
+        """
+        validator = ConfigurationValidator(environment)
+        return validator.generate_security_report(config.model_dump())
 
     @staticmethod
     def validate_config(config: Config) -> List[str]:

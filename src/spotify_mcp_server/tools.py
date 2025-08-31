@@ -7,10 +7,20 @@ import sys
 from typing import Any, Dict, List, Optional
 
 from fastmcp import FastMCP
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .spotify_client import SpotifyClient, SpotifyAPIError, NotFoundError, RateLimitError
 from .user_context import get_current_user, get_user_id
+from .validation import (
+    SecurityValidators,
+    spotify_id_validator,
+    spotify_uri_validator,
+    market_code_validator,
+    callback_url_validator,
+    search_query_validator,
+    playlist_name_validator,
+    playlist_description_validator
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +30,11 @@ logger = logging.getLogger(__name__)
 class AuthenticateParams(BaseModel):
     """Parameters for authenticate tool."""
     callback_url: str = Field(..., description="The callback URL from Spotify authorization")
+    
+    @field_validator('callback_url')
+    @classmethod
+    def validate_callback_url(cls, v):
+        return SecurityValidators.validate_callback_url(v)
 
 
 class SearchTracksParams(BaseModel):
@@ -27,17 +42,42 @@ class SearchTracksParams(BaseModel):
     query: str = Field(..., description="Search query for tracks")
     limit: int = Field(default=20, ge=1, le=50, description="Number of results (1-50)")
     market: Optional[str] = Field(default=None, description="Market code (ISO 3166-1 alpha-2)")
+    
+    @field_validator('query')
+    @classmethod
+    def validate_query(cls, v):
+        return SecurityValidators.validate_search_query(v)
+    
+    @field_validator('market')
+    @classmethod
+    def validate_market(cls, v):
+        return SecurityValidators.validate_market_code(v)
 
 
 class GetPlaylistsParams(BaseModel):
     """Parameters for get_playlists tool."""
     limit: int = Field(default=20, ge=1, le=50, description="Number of playlists (1-50)")
     offset: int = Field(default=0, ge=0, description="Offset for pagination")
+    
+    @field_validator('limit')
+    @classmethod
+    def validate_limit(cls, v):
+        return SecurityValidators.validate_limit(v, 50)
+    
+    @field_validator('offset')
+    @classmethod
+    def validate_offset(cls, v):
+        return SecurityValidators.validate_offset(v)
 
 
 class GetPlaylistParams(BaseModel):
     """Parameters for get_playlist tool."""
     playlist_id: str = Field(..., description="Spotify playlist ID")
+    
+    @field_validator('playlist_id')
+    @classmethod
+    def validate_playlist_id(cls, v):
+        return SecurityValidators.validate_spotify_id(v, "Playlist ID")
 
 
 class CreatePlaylistParams(BaseModel):
@@ -45,6 +85,16 @@ class CreatePlaylistParams(BaseModel):
     name: str = Field(..., description="Playlist name")
     description: Optional[str] = Field(default=None, description="Playlist description")
     public: bool = Field(default=False, description="Whether playlist is public")
+    
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v):
+        return SecurityValidators.validate_playlist_name(v)
+    
+    @field_validator('description')
+    @classmethod
+    def validate_description(cls, v):
+        return SecurityValidators.validate_playlist_description(v)
 
 
 class AddTracksToPlaylistParams(BaseModel):
@@ -52,29 +102,79 @@ class AddTracksToPlaylistParams(BaseModel):
     playlist_id: str = Field(..., description="Spotify playlist ID")
     track_uris: List[str] = Field(..., description="List of Spotify track URIs")
     position: Optional[int] = Field(default=None, ge=0, description="Position to insert tracks")
+    
+    @field_validator('playlist_id')
+    @classmethod
+    def validate_playlist_id(cls, v):
+        return SecurityValidators.validate_spotify_id(v, "Playlist ID")
+    
+    @field_validator('track_uris')
+    @classmethod
+    def validate_track_uris(cls, v):
+        return SecurityValidators.validate_track_uri_list(v)
+    
+    @field_validator('position')
+    @classmethod
+    def validate_position(cls, v):
+        return SecurityValidators.validate_position(v)
 
 
 class RemoveTracksFromPlaylistParams(BaseModel):
     """Parameters for remove_tracks_from_playlist tool."""
     playlist_id: str = Field(..., description="Spotify playlist ID")
     track_uris: List[str] = Field(..., description="List of Spotify track URIs to remove")
+    
+    @field_validator('playlist_id')
+    @classmethod
+    def validate_playlist_id(cls, v):
+        return SecurityValidators.validate_spotify_id(v, "Playlist ID")
+    
+    @field_validator('track_uris')
+    @classmethod
+    def validate_track_uris(cls, v):
+        return SecurityValidators.validate_track_uri_list(v)
 
 
 class GetTrackDetailsParams(BaseModel):
     """Parameters for get_track_details tool."""
     track_id: str = Field(..., description="Spotify track ID")
     market: Optional[str] = Field(default=None, description="Market code (ISO 3166-1 alpha-2)")
+    
+    @field_validator('track_id')
+    @classmethod
+    def validate_track_id(cls, v):
+        return SecurityValidators.validate_spotify_id(v, "Track ID")
+    
+    @field_validator('market')
+    @classmethod
+    def validate_market(cls, v):
+        return SecurityValidators.validate_market_code(v)
 
 
 class GetAlbumDetailsParams(BaseModel):
     """Parameters for get_album_details tool."""
     album_id: str = Field(..., description="Spotify album ID")
     market: Optional[str] = Field(default=None, description="Market code (ISO 3166-1 alpha-2)")
+    
+    @field_validator('album_id')
+    @classmethod
+    def validate_album_id(cls, v):
+        return SecurityValidators.validate_spotify_id(v, "Album ID")
+    
+    @field_validator('market')
+    @classmethod
+    def validate_market(cls, v):
+        return SecurityValidators.validate_market_code(v)
 
 
 class GetArtistDetailsParams(BaseModel):
     """Parameters for get_artist_details tool."""
     artist_id: str = Field(..., description="Spotify artist ID")
+    
+    @field_validator('artist_id')
+    @classmethod
+    def validate_artist_id(cls, v):
+        return SecurityValidators.validate_spotify_id(v, "Artist ID")
 
 
 def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_instance=None) -> None:
@@ -87,10 +187,10 @@ def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_i
     """
     
     async def get_user_spotify_client() -> SpotifyClient:
-        """Get a Spotify client for the current user.
+        """Get a Spotify client for the current user (with caching if enabled).
         
         Returns:
-            SpotifyClient configured for the current user
+            SpotifyClient or CachedSpotifyClient configured for the current user
             
         Raises:
             SpotifyAPIError: If user is not authenticated or server unavailable
@@ -104,7 +204,7 @@ def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_i
         if not user_token_manager.has_tokens():
             raise SpotifyAPIError(f"User {user.display_name} is not authenticated. Use get_auth_url and authenticate tools first.")
         
-        return SpotifyClient(user_token_manager, server_instance.config.api)
+        return server_instance.get_user_spotify_client(user.user_id)
     
     @app.tool()
     async def get_auth_url() -> Dict[str, Any]:
@@ -810,5 +910,89 @@ def register_spotify_tools(app: FastMCP, spotify_client: SpotifyClient, server_i
         except Exception as e:
             pass  # logger.error suppressed for MCP(f"Unexpected error in get_artist_details: {e}")
             raise SpotifyAPIError(f"Failed to get artist details: {str(e)}")
+
+    # Cache management tools (only available if caching is enabled)
+    if server_instance and server_instance.cache:
+        
+        @app.tool()
+        async def get_cache_stats() -> Dict[str, Any]:
+            """Get cache performance statistics and configuration.
+            
+            Returns:
+                Cache statistics including hit rates, entry counts, and configuration
+            """
+            try:
+                if not server_instance or not server_instance.cache:
+                    return {
+                        "error": "Cache not available",
+                        "cache_enabled": False
+                    }
+                
+                stats = await server_instance.cache.get_stats()
+                stats["cache_enabled"] = True
+                
+                return stats
+                
+            except Exception as e:
+                raise SpotifyAPIError(f"Failed to get cache stats: {str(e)}")
+        
+        @app.tool()
+        async def cleanup_cache() -> Dict[str, Any]:
+            """Clean up expired cache entries.
+            
+            Returns:
+                Number of expired entries removed
+            """
+            try:
+                if not server_instance or not server_instance.cache:
+                    return {
+                        "error": "Cache not available",
+                        "cache_enabled": False
+                    }
+                
+                removed_count = await server_instance.cache.cleanup_expired()
+                
+                return {
+                    "success": True,
+                    "removed_entries": removed_count,
+                    "message": f"Cleaned up {removed_count} expired cache entries"
+                }
+                
+            except Exception as e:
+                raise SpotifyAPIError(f"Failed to cleanup cache: {str(e)}")
+        
+        @app.tool()
+        async def clear_user_cache(data_type: Optional[str] = None) -> Dict[str, Any]:
+            """Clear cache entries for the current user.
+            
+            Args:
+                data_type: Optional data type to clear (e.g., 'audio_features', 'playlist')
+                          If not specified, clears all cache for the user
+            
+            Returns:
+                Number of cache entries removed
+            """
+            try:
+                if not server_instance or not server_instance.cache:
+                    return {
+                        "error": "Cache not available",
+                        "cache_enabled": False
+                    }
+                
+                user = get_current_user()
+                removed_count = await server_instance.cache.clear_user_cache(user.user_id, data_type)
+                
+                type_msg = f" of type '{data_type}'" if data_type else ""
+                
+                return {
+                    "success": True,
+                    "removed_entries": removed_count,
+                    "user_id": user.user_id,
+                    "data_type": data_type,
+                    "message": f"Cleared {removed_count} cache entries{type_msg} for user {user.display_name}"
+                }
+                
+            except Exception as e:
+                raise SpotifyAPIError(f"Failed to clear user cache: {str(e)}")
 
     pass  # Suppress info logging for MCP

@@ -12,6 +12,8 @@ import httpx
 from pydantic import BaseModel
 
 from .config import SpotifyConfig
+from .session_manager import get_session_manager
+from .secure_errors import log_security_event, ErrorSeverity
 
 
 class AuthTokens(BaseModel):
@@ -43,9 +45,8 @@ class SpotifyAuthenticator:
         self.auth_url = "https://accounts.spotify.com/authorize"
         self.token_url = "https://accounts.spotify.com/api/token"
         
-        # PKCE state for security
-        self._code_verifier: Optional[str] = None
-        self._state: Optional[str] = None
+        # Session manager for secure state handling
+        self.session_manager = get_session_manager()
 
     def _generate_code_verifier(self) -> str:
         """Generate PKCE code verifier.
@@ -69,18 +70,37 @@ class SpotifyAuthenticator:
         code_challenge = base64.urlsafe_b64encode(digest).decode('utf-8')
         return code_challenge.rstrip('=')
 
-    def get_authorization_url(self) -> Tuple[str, str, str]:
-        """Generate authorization URL for OAuth flow.
+    def get_authorization_url(self, user_id: Optional[str] = None) -> Tuple[str, str, str]:
+        """Generate authorization URL for OAuth flow with secure session management.
+        
+        Args:
+            user_id: Optional user ID for session tracking
         
         Returns:
             Tuple of (authorization_url, state, code_verifier)
         """
         # Generate PKCE parameters
-        self._code_verifier = self._generate_code_verifier()
-        code_challenge = self._generate_code_challenge(self._code_verifier)
+        code_verifier = self._generate_code_verifier()
+        code_challenge = self._generate_code_challenge(code_verifier)
         
         # Generate state for CSRF protection
-        self._state = secrets.token_urlsafe(32)
+        state = secrets.token_urlsafe(32)
+        
+        # Create secure session
+        session_created = self.session_manager.create_session(
+            state=state,
+            code_verifier=code_verifier,
+            user_id=user_id
+        )
+        
+        if not session_created:
+            log_security_event(
+                event_type="session_creation_failed",
+                severity=ErrorSeverity.MEDIUM,
+                details={"reason": "max_sessions_exceeded"},
+                user_id=user_id
+            )
+            raise ValueError("Unable to create authentication session. Too many active sessions.")
         
         # Build authorization URL
         params = {
@@ -88,27 +108,27 @@ class SpotifyAuthenticator:
             "response_type": "code",
             "redirect_uri": self.redirect_uri,
             "scope": self.scopes,
-            "state": self._state,
+            "state": state,
             "code_challenge_method": "S256",
             "code_challenge": code_challenge,
             "show_dialog": "false"  # Don't force re-authorization
         }
         
         auth_url = f"{self.auth_url}?{urlencode(params)}"
-        return auth_url, self._state, self._code_verifier
+        return auth_url, state, code_verifier
 
     async def exchange_code_for_tokens(
         self, 
         authorization_code: str, 
         state: str,
-        code_verifier: Optional[str] = None
+        user_id: Optional[str] = None
     ) -> AuthTokens:
-        """Exchange authorization code for access and refresh tokens.
+        """Exchange authorization code for access and refresh tokens with secure session validation.
         
         Args:
             authorization_code: Authorization code from callback
             state: State parameter for CSRF validation
-            code_verifier: PKCE code verifier (optional, uses stored if not provided)
+            user_id: Optional user ID for additional validation
             
         Returns:
             Authentication tokens
@@ -117,14 +137,18 @@ class SpotifyAuthenticator:
             ValueError: If state validation fails or token exchange fails
             httpx.HTTPError: If HTTP request fails
         """
-        # Validate state for CSRF protection
-        if state != self._state:
-            raise ValueError("Invalid state parameter - possible CSRF attack")
+        # Validate and consume session for CSRF protection
+        session = self.session_manager.validate_and_consume_session(state, user_id)
+        if not session:
+            log_security_event(
+                event_type="invalid_oauth_state",
+                severity=ErrorSeverity.HIGH,
+                details={"state_prefix": state[:8] if state else "empty"},
+                user_id=user_id
+            )
+            raise ValueError("Invalid or expired authentication session")
         
-        # Use provided code_verifier or stored one
-        verifier = code_verifier or self._code_verifier
-        if not verifier:
-            raise ValueError("No code verifier available")
+        verifier = session.code_verifier
         
         # Prepare token exchange request
         headers = {

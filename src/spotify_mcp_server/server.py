@@ -14,8 +14,10 @@ from .config import Config, ConfigManager
 from .auth import SpotifyAuthenticator
 from .token_manager import TokenManager, UserTokenManager
 from .spotify_client import SpotifyClient
+from .cache import SpotifyCache, CachedSpotifyClient
 from .tools import register_spotify_tools
 from .resources import register_spotify_resources
+from .session_manager import initialize_session_manager, cleanup_session_manager
 from .middleware import (
     SpotifyLoggingMiddleware,
     SpotifyErrorHandlingMiddleware, 
@@ -51,6 +53,7 @@ class SpotifyMCPServer:
         self.authenticator = SpotifyAuthenticator(config.spotify)
         self.token_manager: Optional[TokenManager] = None
         self.spotify_client: Optional[SpotifyClient] = None
+        self.cache: Optional[SpotifyCache] = None
         
         # User-specific token manager cache for multi-user support
         self._user_token_managers: Dict[str, UserTokenManager] = {}
@@ -77,6 +80,27 @@ class SpotifyMCPServer:
     async def initialize(self) -> None:
         """Initialize server components."""
         self._log_to_stderr("Initializing Spotify MCP Server...")
+        
+        # Initialize session manager for secure OAuth state handling
+        await initialize_session_manager(
+            session_timeout_minutes=5,  # 5-minute timeout for OAuth sessions
+            cleanup_interval_minutes=1,  # Clean up expired sessions every minute
+            max_sessions_per_user=3  # Max 3 concurrent auth sessions per user
+        )
+        self._log_to_stderr("Session manager initialized with 5-minute timeout")
+        
+        # Initialize cache if enabled
+        if self.config.cache.enabled:
+            config_dir = Path(self.config_path).resolve().parent
+            cache_path = config_dir / self.config.cache.db_path
+            
+            # Update cache config with absolute path
+            cache_config = self.config.cache.model_copy()
+            cache_config.db_path = str(cache_path)
+            
+            self.cache = SpotifyCache(cache_config)
+            await self.cache.initialize()
+            self._log_to_stderr(f"Cache initialized: {cache_path}")
         
         # Initialize token manager with absolute path
         config_dir = Path(self.config_path).resolve().parent
@@ -136,6 +160,24 @@ class SpotifyMCPServer:
         """
         user_token_manager = self.get_user_token_manager(user_id)
         return await user_token_manager.load_tokens()
+    
+    def get_user_spotify_client(self, user_id: str) -> SpotifyClient:
+        """Get a Spotify client for a specific user, with caching if enabled.
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            SpotifyClient or CachedSpotifyClient instance for the user
+        """
+        user_token_manager = self.get_user_token_manager(user_id)
+        base_client = SpotifyClient(user_token_manager, self.config.api)
+        
+        # Return cached client if cache is enabled
+        if self.cache:
+            return CachedSpotifyClient(base_client, self.cache, user_id)
+        
+        return base_client
     
     def get_user_auth_state(self, user_id: str) -> Optional[Dict[str, str]]:
         """Get authentication state for a specific user.
@@ -289,7 +331,10 @@ class SpotifyMCPServer:
         """Cleanup server resources."""
         self._log_to_stderr("Cleaning up server resources...")
         
-        # Clean up user token managers first
+        # Clean up session manager first
+        await cleanup_session_manager()
+        
+        # Clean up user token managers
         await self.cleanup_user_managers()
         
         if self.spotify_client:
