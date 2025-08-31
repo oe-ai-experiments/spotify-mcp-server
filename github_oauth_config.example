@@ -1,0 +1,55 @@
+# GitHub OAuth Configuration for FastMCP Deployment
+# 
+# SECURITY NOTE: This is a template file. DO NOT commit actual credentials to git.
+# Copy these environment variables to your deployment environment.
+#
+# GitHub OAuth App Details:
+# - Application name: Spotify MCP Server
+# - Homepage URL: https://eovidiu.fastmcp.app
+# - Authorization callback URL: https://eovidiu.fastmcp.app/auth/callback
+
+# =============================================================================
+# GITHUB OAUTH CREDENTIALS (REQUIRED)
+# =============================================================================
+# Get these from: https://github.com/settings/developers
+# Your GitHub OAuth App Client ID (public identifier)
+FASTMCP_SERVER_AUTH_GITHUB_CLIENT_ID=YOUR_GITHUB_CLIENT_ID_HERE
+
+# Your GitHub OAuth App Client Secret (KEEP SECRET!)
+FASTMCP_SERVER_AUTH_GITHUB_CLIENT_SECRET=YOUR_GITHUB_CLIENT_SECRET_HERE
+
+# =============================================================================
+# FASTMCP GITHUB OAUTH CONFIGURATION
+# =============================================================================
+# Use GitHub authentication provider
+FASTMCP_SERVER_AUTH=GITHUB
+
+# FastMCP server URL (must match your GitHub OAuth App callback URL)
+FASTMCP_SERVER_AUTH_GITHUB_BASE_URL=https://eovidiu.fastmcp.app
+
+# OAuth callback path (default is /auth/callback)
+FASTMCP_SERVER_AUTH_GITHUB_REDIRECT_PATH=/auth/callback
+
+# Required GitHub scopes (minimal for user identification)
+FASTMCP_SERVER_AUTH_GITHUB_REQUIRED_SCOPES=user
+
+# HTTP request timeout for GitHub API calls
+FASTMCP_SERVER_AUTH_GITHUB_TIMEOUT_SECONDS=10
+
+# =============================================================================
+# EXISTING SPOTIFY CONFIGURATION (KEEP THESE)
+# =============================================================================
+# Your existing Spotify configuration
+SPOTIFY_CLIENT_ID=your_spotify_client_id
+SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
+SPOTIFY_REDIRECT_URI=https://eovidiu.fastmcp.app/auth/spotify/callback
+
+# =============================================================================
+# DEPLOYMENT INSTRUCTIONS
+# =============================================================================
+# 1. Copy this file to your deployment environment
+# 2. Set these environment variables in FastMCP Cloud
+# 3. Deploy using: fastmcp_github_main.py as the entrypoint
+# 4. The server will automatically use GitHub OAuth for authentication
+# 5. Users will be redirected to GitHub for authentication
+# 6. Bearer tokens will be generated automatically by FastMCP
