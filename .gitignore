@@ -80,7 +80,3 @@ cover/
 .mcp-todos.json
 .cursor/rules/02-my-custom-rules.mdc
 
-# GitHub OAuth configuration with real credentials (keep templates, ignore actual configs)
-*.env.local
-.env.github
-github_oauth_config.real

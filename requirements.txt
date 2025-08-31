@@ -1,13 +1,7 @@
-# Core dependencies - using development version for GitHub OAuth support
-git+https://github.com/jlowin/fastmcp.git@210e9cc5ca4003a0bcfac73399051a780b67a43a
+# Core dependencies
+fastmcp>=0.1.0
 httpx>=0.25.0
 pydantic>=2.0.0
 python-dotenv>=1.0.0
 cryptography>=41.0.0
 aiofiles>=23.0.0
-
-# Additional dependencies for FastMCP development version
-openai>=1.95.1
-distro>=1.7.0
-jiter>=0.4.0
-tqdm>4
