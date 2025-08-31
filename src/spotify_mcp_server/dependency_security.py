@@ -464,7 +464,7 @@ class DependencySecurityScanner:
         )
         
         report = {
-            "scan_timestamp": datetime.utcnow().isoformat(),
+            "scan_timestamp": datetime.now(datetime.UTC).isoformat(),
             "security_score": security_score,
             "summary": {
                 "total_packages": len(self.installed_packages),
